@@ -1,0 +1,199 @@
+---
+version: '2.0'
+
+name: oesi_owner
+description: OESI hardware owner workflows and actions
+
+workflows:
+
+  check_node_access:
+    type: direct
+    input:
+      - node_id
+    output:
+      can_access: <% $.can_access %>
+
+    tasks:
+      get_node:
+        action: oesiironic.node_get node_id=<% $.node_id %>
+        publish:
+          can_access: <% task(get_node).result.properties.get('project','') = ($.openstack.project_name) %>
+
+
+  create_node:
+    type: direct
+    input:
+      - name
+      - driver: ipmi
+      - driver_info
+      - kernel_image_name: bm-deploy-kernel
+      - ramdisk_image_name: bm-deploy-ramdisk
+      - properties: {}
+      - port_address
+    output:
+      node_uuid: <% $.node_uuid %>
+
+    tasks:
+      get_kernel_image_id:
+        action: glance.images_list
+        publish:
+          kernel_image_id: <% let(kernel_image_name => $.kernel_image_name) -> task(get_kernel_image_id).result.where($.get('name') = $kernel_image_name).first().id %>
+        on-success:
+          - get_ramdisk_image_id
+
+      get_ramdisk_image_id:
+        action: glance.images_list
+        publish:
+          ramdisk_image_id: <% let(ramdisk_image_name => $.ramdisk_image_name) -> task(get_ramdisk_image_id).result.where($.get('name') = $ramdisk_image_name).first().id %>
+        on-success:
+          - create_ironic_node
+
+      create_ironic_node:
+        action: oesiironic.node_create
+        input:
+          name: <% $.name %>
+          driver: <% $.driver %>
+          driver_info: <% $.driver_info.set("deploy_kernel", $.kernel_image_id ).set("deploy_ramdisk", $.ramdisk_image_id) %>
+          properties: <% $.properties.set("project", $.openstack.project_name) %>
+          resource_class: baremetal
+        publish:
+          node_uuid: <% task(create_ironic_node).result.uuid %>
+        on-success:
+          - create_node_port
+
+      create_node_port:
+        action: oesiironic.port_create
+        input:
+          node_uuid: <% $.node_uuid %>
+          address: <% $.port_address %>
+
+
+  set_node_provision_state:
+    type: direct
+    input:
+      - node_id
+      - state
+    output:
+     message: <% $.message %>
+
+    tasks:
+      check_node_access:
+        workflow: check_node_access
+        input:
+          node_id: <% $.node_id %>
+        publish:
+          can_access: <% task().result.can_access %>
+        on-success:
+          - set_node_provision_state: <% $.can_access %>
+          - abort: <% not $.can_access %>
+
+      abort:
+        publish:
+          message: You do not have permission to manage node <% $.node_id %>
+
+      set_node_provision_state:
+        action: oesiironic.node_set_provision_state
+        input:
+          node_uuid: <% $.node_id %>
+          state: <% $.state %>
+        publish:
+          message: Node <% $.node_id %> provision state set to <% $.state %>
+
+
+  introspect_node:
+    type: direct
+    input:
+      - node_id
+    output:
+     message: <% $.message %>
+
+    tasks:
+      check_node_access:
+        workflow: check_node_access
+        input:
+          node_id: <% $.node_id %>
+        publish:
+          can_access: <% task().result.can_access %>
+        on-success:
+          - introspect_node: <% $.can_access %>
+          - abort: <% not $.can_access %>
+
+      abort:
+        publish:
+          message: You do not have permission to manage node <% $.node_id %>
+
+      introspect_node:
+        action: baremetal_introspection.introspect
+        input:
+          uuid: <% $.node_id %>
+        publish:
+          message: Node <% $.node_id %> introspection started
+
+
+  lend_node:
+    type: direct
+    input:
+      - node_id
+
+    tasks:
+      check_node_access:
+        workflow: check_node_access
+        input:
+          node_id: <% $.node_id %>
+        publish:
+          can_access: <% task().result.can_access %>
+        on-success:
+          - make_node_available: <% $.can_access %>
+          - abort: <% not $.can_access %>
+
+      abort:
+        publish:
+          message: You do not have permission to manage node <% $.node_id %>
+
+      make_node_available:
+        action: oesiironic.node_update
+        input:
+          node_id: <% $.node_id %>
+          patch: [{"op": "add", "path": "/properties/available", "value": "*"}]
+        publish:
+          message: Node <% $.node_id %> is now available
+
+  retrieve_node:
+    type: direct
+    input:
+      - node_id
+
+    tasks:
+      check_node_access:
+        workflow: check_node_access
+        input:
+          node_id: <% $.node_id %>
+        publish:
+          can_access: <% task().result.can_access %>
+        on-success:
+          - make_node_unavailable: <% $.can_access %>
+          - abort: <% not $.can_access %>
+
+      abort:
+        publish:
+          message: You do not have permission to manage node <% $.node_id %>
+
+      make_node_unavailable:
+        action: oesiironic.node_update
+        input:
+          node_id: <% $.node_id %>
+          patch: [{"op": "remove", "path": "/properties/available"}]
+        publish:
+          message: Node <% $.node_id %> is now unavailable
+        on-complete:
+          - get_running_server
+
+      get_running_server:
+        action: oesiironic.node_get node_id=<% $.node_id %>
+        publish:
+          instance_id: <% task(get_running_server).result.instance_uuid %>
+        on-success:
+          - delete_running_server: <% $.instance_id != null %>
+
+      delete_running_server:
+        action: nova.servers_delete server=<% $.instance_id %>
