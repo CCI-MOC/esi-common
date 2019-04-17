@@ -53,6 +53,13 @@ workflows:
         publish:
           ramdisk_image_id: <% let(ramdisk_image_name => $.ramdisk_image_name) -> task(get_ramdisk_image_id).result.where($.get('name') = $ramdisk_image_name).first().id %>
         on-success:
+          - get_project
+
+      get_project:
+        action: keystone.projects_list
+        publish:
+          project_id: <% let(project => $.openstack.project_name) -> task(get_project).result.where($.get('name') = $project).first().id %>
+        on-success:
           - create_ironic_node
 
       create_ironic_node:
@@ -61,7 +68,7 @@ workflows:
           name: <% $.name %>
           driver: <% $.driver %>
           driver_info: <% $.driver_info.set("deploy_kernel", $.kernel_image_id ).set("deploy_ramdisk", $.ramdisk_image_id) %>
-          properties: <% $.properties.set("project_owner_id", $.openstack.project_id) %>
+          properties: <% $.properties.set("project_owner_id", $.project_id) %>
           resource_class: baremetal
         publish:
           node_uuid: <% task(create_ironic_node).result.uuid %>
