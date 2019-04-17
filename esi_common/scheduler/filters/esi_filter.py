@@ -35,5 +35,4 @@ class ESIFilter(filters.BaseHostFilter):
     def host_passes(self, host_state, spec_obj):
         ironic_client = ironic_client_wrapper.IronicClientWrapper()
         ironic_node = ironic_client.call('node.get', host_state.nodename)
-        ironic_node_properties = ironic_node.properties
-        return ironic_node_properties.get("available", "") == '*'
+        return (ironic_node.properties.get("available", "") == '*' or ironic_node.properties.get("project_id") == spec_obj.project_id)
