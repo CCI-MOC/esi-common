@@ -17,7 +17,7 @@ workflows:
       get_node:
         action: esi.ironic.node_get node_id=<% $.node_id %>
         publish:
-          can_access: <% task(get_node).result.properties.get('project_owner_id','') = ($.openstack.project_id) or task(get_node).result.properties.get('project_id','') = ($.openstack.project_id)%>
+          can_access: <% task(get_node).result.properties.get('project_owner','') = ($.openstack.project_name) or task(get_node).result.properties.get('project_owner','') = ($.openstack.project_name) %>
 
 
   create_node:
@@ -54,7 +54,7 @@ workflows:
           name: <% $.name %>
           driver: <% $.driver %>
           driver_info: <% $.driver_info.set("deploy_kernel", $.kernel_image_id ).set("deploy_ramdisk", $.ramdisk_image_id) %>
-          properties: <% $.properties.set("project_owner_id", $.openstack.project_id) %>
+          properties: <% $.properties.set("project_owner", $.openstack.project_name) %>
           resource_class: baremetal
         publish:
           node_uuid: <% task(create_ironic_node).result.uuid %>
